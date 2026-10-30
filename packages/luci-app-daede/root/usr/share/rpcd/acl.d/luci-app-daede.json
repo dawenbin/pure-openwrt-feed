@@ -1,0 +1,115 @@
+{
+	"luci-app-daede": {
+		"description": "Grant access to daed status, geodata and backup",
+		"read": {
+			"file": {
+				"/etc/init.d/daed": [
+					"read"
+				],
+				"/etc/config/daede": [
+					"read"
+				],
+				"/var/log/daed/daed.log": [
+					"read"
+				],
+				"/usr/share/v2ray/geoip.dat": [
+					"read"
+				],
+				"/usr/share/v2ray/geosite.dat": [
+					"read"
+				],
+				"/sys/kernel/btf/vmlinux": [
+					"read"
+				],
+				"/usr/lib/debug/boot": [
+					"list"
+				],
+				"/run/netns/daens": [
+					"read"
+				],
+				"/tmp/luci-app-daede.geoip.log": [
+					"read"
+				],
+				"/tmp/luci-app-daede.geosite.log": [
+					"read"
+				],
+				"/tmp/luci-app-daede.backup.log": [
+					"read"
+				],
+				"/bin/pidof daed": [
+					"exec"
+				]
+			},
+			"ubus": {
+				"service": [
+					"list"
+				]
+			},
+			"uci": [
+				"daed",
+				"daede"
+			]
+		},
+		"write": {
+			"file": {
+				"/etc/daed/.daede-sub-stage-*": [
+					"write"
+				],
+				"/etc/daed/daede-sub-*": [
+					"write"
+				],
+				"/usr/share/luci-app-daede/snapshot-file.sh publish *": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/snapshot-file.sh replace * *": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/snapshot-file.sh discard *": [
+					"exec"
+				],
+				"/etc/config/daede": [
+					"write"
+				],
+				"/var/log/daed/daed.log": [
+					"write"
+				],
+				"/etc/init.d/daed start": [
+					"exec"
+				],
+				"/etc/init.d/daed restart": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/update-geo.sh geoip": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/update-geo.sh geosite": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/geo-cron.sh enable": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/geo-cron.sh disable": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/fetch-clash-yaml.sh *": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/config-backup.sh export": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/config-backup.sh reset": [
+					"exec"
+				],
+				"/usr/share/luci-app-daede/config-backup.sh import /tmp/daede-import.*.b64": [
+					"exec"
+				],
+				"/tmp/daede-import.*.b64": [
+					"write"
+				]
+			},
+			"uci": [
+				"daede"
+			]
+		}
+	}
+}

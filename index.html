@@ -14,7 +14,7 @@
 </head>
 <body>
 <h1>pure-openwrt-feed</h1>
-<p class="muted">自建 OpenWrt apk 源 · 仅含 daed 与 vmlinux-btf · 不含任何凭据</p>
+<p class="muted">自建 OpenWrt apk 源 · 含 daed、vmlinux-btf 与 luci-app-daede · 不含任何凭据</p>
 
 <h2>使用方法</h2>
 <pre>wget -O /etc/apk/keys/pure-openwrt-feed.pem   https://dawenbin.github.io/pure-openwrt-feed/keys/pure-openwrt-feed.pem
@@ -29,7 +29,8 @@ apk add daed</pre>
 <p class="muted">每个包保留最近 3 个版本。</p>
 
 <p class="muted">
-  daed: AGPL-3.0 · daeuniverse/daed<br>
+  daed: AGPL-3.0 · daeuniverse/dae-wing<br>
+  luci-app-daede: AGPL-3.0 / Apache-2.0 · kenzok8/openwrt-daede<br>
   vmlinux-btf: GPL-2.0 · 由 openwrt/openwrt 内核源码、补丁与配置生成
 </p>
 </body>

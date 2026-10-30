@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# 把 packages/daed/Makefile 更新到指定的 daed 版本：改版本号，hash 由 SDK 官方的
+# 把 packages/daed/Makefile 更新到指定的 daed 版本：改版本号与 wing 提交，hash 由 SDK 官方的
 # check FIXUP 重算（web.zip 与带子模块的源码归档都这样取得）。版本未变时什么都不做。
+#
+# daed 与 dae-wing 上游已归档，正常不会再有新版本；这里保留是为了上游恢复或换源时仍能自动走通。
+# 新版本的 wing 取自该 daed tag 钉的子模块提交，当前钉的 b089b568 比 v2.1.1 的 tag 更新，
+# 所以只有版本号真的变化时才会替换。
 #
 # 用法：scripts/bump-daed.sh <daed 版本，不带 v> <build.sh 的参数…>
 #   例：scripts/bump-daed.sh 2.2.0 --openwrt-version 25.12.6 --cache DIR --work DIR --key-dir DIR
@@ -25,9 +29,17 @@ for ((i = 0; i < ${#args[@]}; i++)); do
 done
 : "${work:=${WORK:-$HOME/build/feed-work}}"
 
+if [ "$cur" != "$VER" ]; then
+	tag="$(mktemp -d)"
+	trap 'rm -rf "$tag"' EXIT
+	git clone -q --depth 1 -b "v$VER" https://github.com/daeuniverse/daed.git "$tag"
+	wing="$(git -C "$tag" ls-tree HEAD wing | awk '{print $3}')"
+	printf '%s' "$wing" | grep -qE '^[0-9a-f]{40}$' || { echo "取不到 v$VER 钉的 wing 提交"; exit 1; }
+	sed -i "s/^PKG_SOURCE_VERSION:=.*/PKG_SOURCE_VERSION:=$wing/" "$MK"
+fi
 sed -i -E \
 	-e "s/^PKG_VERSION:=.*/PKG_VERSION:=$VER/" \
-	-e 's/^PKG_RELEASE:=.*/PKG_RELEASE:=1/' \
+	-e "$([ "$cur" = "$VER" ] || echo 's/^PKG_RELEASE:=.*/PKG_RELEASE:=1/')" \
 	-e 's/^PKG_MIRROR_HASH:=.*/PKG_MIRROR_HASH:=skip/' \
 	-e 's/^(\s*)HASH:=.*/\1HASH:=skip/' \
 	"$MK"

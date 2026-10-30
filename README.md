@@ -2,13 +2,14 @@
 
 自建 OpenWrt apk 源，供 [pure-openwrt](https://github.com/dawenbin/pure-openwrt) 使用。
 
-官方 OpenWrt 源里没有这两个包，而设备需要它们，所以在这里定义、构建、签名、托管。
+官方 OpenWrt 源里没有这些包，而设备需要它们，所以在这里定义、构建、签名、托管。
 包的构建定义、编译宿主镜像和构建脚本都在本仓库。
 
 ## 内容
 
 ```text
 daed-<ver>-r<n>.apk          daed（dae-wing + dae + 内嵌面板）
+luci-app-daede-<ver>-r<n>.apk  LuCI 菜单，语言包 luci-i18n-daede-zh-cn
 vmlinux-btf-<kver>-r<n>.apk  官方内核配套的 detached BTF
 ```
 
@@ -43,12 +44,13 @@ apk add daed
 ## 构建
 
 ```text
-packages/daed/          daed 的打包定义（改编自 ImmortalWrt）
+packages/daed/          daed 的打包定义（改编自 ImmortalWrt），取 dae-wing `b089b568`
+packages/luci-app-daede/ LuCI 菜单，来自 kenzok8/openwrt-daede 的固定提交，差异见 UPSTREAM.md
 packages/vmlinux-btf/   影子内核 + BTF 编码 + 三道一致性门
 builder/Dockerfile      编译宿主镜像（Debian 12 + pahole 1.32）
 scripts/derive.sh       从 OpenWrt 版本号派生 SDK、内核、vermagic 等全部版本信息
 scripts/build.sh        入口：下载校验 SDK → 构建镜像 → 编译 → 签名 → 索引
-scripts/bump-daed.sh    更新 daed 版本，hash 由 SDK 的 check FIXUP 重算
+scripts/bump-daed.sh    更新 daed 版本，hash 由 SDK 的 check FIXUP 重算（daed 上游已归档）
 scripts/in-container.sh 容器内步骤
 scripts/verify.sh       在临时根目录里用 apk 验证产物
 ```
@@ -84,5 +86,6 @@ SDK `feeds.conf.default` 钉的完整提交。
 
 | 包 | 上游 | 许可 |
 | --- | --- | --- |
-| `daed` | [daeuniverse/daed](https://github.com/daeuniverse/daed)，打包定义改编自 [immortalwrt/packages](https://github.com/immortalwrt/packages)（Copyright (C) 2023 ImmortalWrt.org） | AGPL-3.0 / MIT；打包定义 GPL-2.0 |
+| `daed` | [daeuniverse/dae-wing](https://github.com/daeuniverse/dae-wing) `b089b568` 与 [daeuniverse/daed](https://github.com/daeuniverse/daed) v2.1.1 的前端（均已归档），打包定义改编自 [immortalwrt/packages](https://github.com/immortalwrt/packages)（Copyright (C) 2023 ImmortalWrt.org） | AGPL-3.0；打包定义 GPL-2.0 |
+| `luci-app-daede` | [kenzok8/openwrt-daede](https://github.com/kenzok8/openwrt-daede)，打包定义改编自 ImmortalWrt（Copyright (C) 2023 ImmortalWrt.org） | 仓库 AGPL-3.0，源文件头 Apache-2.0 |
 | `vmlinux-btf` | 由 [OpenWrt](https://github.com/openwrt/openwrt) 的内核源码、补丁与配置生成 | GPL-2.0 |

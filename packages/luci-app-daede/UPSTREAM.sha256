@@ -1,0 +1,10 @@
+38b432aab211b7089aa541c52f459160b1f6cf19d734255dc4f075ffb7bdd1f2  htdocs/luci-static/resources/view/daede/airport-sync.js
+b68b3c13b0af40349674bf61733096298b97f15dcbf4a67f8de12ae145ef249d  htdocs/luci-static/resources/view/daede/clash-converter.js
+4bbcb138d7975d91d97457e186571ea69c6f4e925e87778163b66dfe2e3f1505  htdocs/luci-static/resources/view/daede/daed-session.js
+6b2c84be5e49e2bb2cbc715833049823d9c8c85ddd1513cebb3fba9368f56caf  htdocs/luci-static/resources/view/daede/styles.js
+a07bc24468b9654ce76a547d47a2db282d07733b715db4c73a98bd63961f9550  htdocs/luci-static/resources/view/daede/vendor/js-yaml.LICENSE
+da1e8c845d515c586ca48897a26bf180494a21d34e2f92b0c2e2d51e7c55a53d  htdocs/luci-static/resources/view/daede/vendor/js-yaml.min.js
+b230f0479d4c8d5072206ef2f826c21090dbcce8a87b8b8b0f0007d01e158f1e  po/templates/daede.pot
+55c6cb324255601c2ed50794e77c7a4dcb34ff75f4f35fa54e7f8936e26f4474  root/usr/share/luci-app-daede/fetch-clash-yaml.sh
+cd47c7716c57152fbe52444ac75545f147d6c592721821f2b3e7df834ffe62f8  root/usr/share/luci-app-daede/snapshot-file.sh
+9a8092f614f52d0dd06c8d6738c7563dfbdd9ab631357463debf60cd9ca3fb7e  root/www/cgi-bin/daede-sub

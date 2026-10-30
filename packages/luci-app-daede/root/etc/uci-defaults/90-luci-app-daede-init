@@ -1,0 +1,9 @@
+#!/bin/sh
+# 按 daede 配置写入 geodata 的 cron 条目。可重复执行（geo-cron.sh 先清后写）。
+
+if [ "$(uci -q get daede.config.geo_auto)" = 1 ]; then
+	/usr/share/luci-app-daede/geo-cron.sh enable
+fi
+rm -f /tmp/luci-indexcache.* 2>/dev/null
+rm -rf /tmp/luci-modulecache/* 2>/dev/null
+exit 0

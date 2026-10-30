@@ -27,7 +27,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TARGET=x86/64
 ARCH_PACKAGES=x86_64
 
-PACKAGES="${PACKAGES:-vmlinux-btf daed}"
+PACKAGES="${PACKAGES:-vmlinux-btf daed luci-app-daede}"
 CACHE="${CACHE:-$HOME/build/feed-cache}"
 WORK="${WORK:-$HOME/build/feed-work}"
 KEY_DIR="${KEY_DIR:-$HOME/build/feed-keys}"
@@ -53,6 +53,9 @@ for f in private-key.pem public-key.pem; do
 	[ -s "$KEY_DIR/$f" ] || { echo "缺少签名密钥 $KEY_DIR/$f"; exit 1; }
 done
 mkdir -p "$CACHE/dl" "$WORK/logs" "$OUT"
+
+# 第三方文件必须与钉住的提交一致
+(cd "$ROOT/packages/luci-app-daede" && sha256sum -c --quiet UPSTREAM.sha256)
 
 derived="$(bash "$ROOT/scripts/derive.sh" "$OPENWRT_VERSION")"
 echo "$derived"

@@ -25,18 +25,23 @@ install -m 600 /keys/private-key.pem private-key.pem
 install -m 644 /keys/public-key.pem public-key.pem
 
 echo "=== feeds ==="
-# base 提供 bpf-headers、ca-bundle，packages 提供 golang 构建框架；
-# 两者的提交都取自 SDK 的 feeds.conf.default，其余 feed 用不到
-grep -E '^src-git (--root=package )?(base|packages) ' feeds.conf.default > feeds.conf
+# base 提供 bpf-headers、ca-bundle，packages 提供 golang 构建框架，luci 提供 luci.mk 与 po2lmo；
+# 提交都取自 SDK 的 feeds.conf.default，其余 feed 用不到
+grep -E '^src-git (--root=package )?(base|packages|luci) ' feeds.conf.default > feeds.conf
 # 放进 SDK 目录再 link：路径落在 TOPDIR 下时，包元数据的 origin 才是 pure/<包>，
 # 而不是容器内绝对路径
 rm -rf pure
 cp -a /feed/packages pure
+# 从 Windows 检出时没有可执行位；重置配置要用 daed 包的默认配置
+find pure/luci-app-daede/root -path '*/usr/share/luci-app-daede/*.sh' -exec chmod 755 {} +
+chmod 755 pure/luci-app-daede/root/www/cgi-bin/*
+cp pure/daed/files/daed.config pure/luci-app-daede/root/usr/share/luci-app-daede/defaults/daed
 echo "src-link pure $SDK/pure" >> feeds.conf
 cat feeds.conf
-./scripts/feeds update base packages pure
+./scripts/feeds update base packages luci pure
 # shellcheck disable=SC2086
 ./scripts/feeds install -p pure $PACKAGES
+./scripts/feeds install -p luci luci-base
 
 echo "=== 配置 ==="
 # SDK 默认会开 CONFIG_ALL*（编出全部包）。只选目标包，依赖交给 defconfig 计算
@@ -45,6 +50,10 @@ echo "=== 配置 ==="
 	echo '# CONFIG_ALL_KMODS is not set'
 	echo '# CONFIG_ALL_NONSHARED is not set'
 	for p in $PACKAGES; do echo "CONFIG_PACKAGE_$p=m"; done
+	# 语言包要 luci-base 在配置里才可见；这里只是打开选项，不会编译 luci-base
+	echo 'CONFIG_PACKAGE_luci-base=m'
+	echo 'CONFIG_LUCI_LANG_zh_Hans=y'
+	echo 'CONFIG_PACKAGE_luci-i18n-daede-zh-cn=m'
 } > .config
 make defconfig >/dev/null
 grep -q '^CONFIG_SIGNED_PACKAGES=y' .config
@@ -80,14 +89,23 @@ done
 echo "=== 收集、签名、索引 ==="
 dest="/out/$ARCH_PACKAGES"
 mkdir -p "$dest" /out/keys
-rm -f "$dest"/*.apk "$dest"/packages.adb
+# 目录里可能已有流水线放入的沿用 apk，不动它们，只处理本次编出来的
+rm -f "$dest"/packages.adb
 for p in $PACKAGES; do
 	cp -v bin/packages/"$ARCH_PACKAGES"/pure/"$p"-[0-9]*.apk "$dest"/
 done
+case " $PACKAGES " in
+	*" luci-app-daede "*) cp -v bin/packages/"$ARCH_PACKAGES"/pure/luci-i18n-daede-zh-cn-[0-9]*.apk "$dest"/ ;;
+esac
 # OpenWrt 只签索引；这里给单个包也签上，单独下载的 apk 也能校验来源。
 # 必须逐个调用：apk 3.0.5 的 adbsign 传多个文件时只签第一个，且返回 0
-for f in "$dest"/*.apk; do
-	"$APK" adbsign --allow-untrusted --sign-key private-key.pem "$f"
+for p in $PACKAGES; do
+	case "$p" in luci-app-daede) names="$p luci-i18n-daede-zh-cn" ;; *) names="$p" ;; esac
+	for n in $names; do
+		for f in bin/packages/"$ARCH_PACKAGES"/pure/"$n"-[0-9]*.apk; do
+			"$APK" adbsign --allow-untrusted --sign-key private-key.pem "$dest/$(basename "$f")"
+		done
+	done
 done
 (
 	cd "$dest"
