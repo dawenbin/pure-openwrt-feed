@@ -74,7 +74,14 @@ find "$CACHE" -maxdepth 1 -name 'openwrt-sdk-*' ! -name "$SDK_TARBALL" -delete
 
 # 镜像 tag 跟随 Dockerfile 内容，Dockerfile 一改就重建
 image="pure-openwrt-feed-builder:$(sha256sum "$ROOT/builder/Dockerfile" | cut -c1-12)"
-docker image inspect "$image" >/dev/null 2>&1 || docker build -t "$image" "$ROOT/builder"
+# Docker Hub 与 apt 源偶尔断连，重试整个构建，已完成的层有缓存
+if ! docker image inspect "$image" >/dev/null 2>&1; then
+	for attempt in 1 2 3 4 5; do
+		docker build -t "$image" "$ROOT/builder" && break
+		[ "$attempt" = 5 ] && { echo "构建宿主镜像失败"; exit 1; }
+		sleep 30
+	done
+fi
 
 start=$(date +%s)
 docker run --rm \
