@@ -1,0 +1,6 @@
+# 二进制产物由 pure-openwrt 的流水线发布到 gh-pages 分支，不进 main
+*.apk
+*.adb
+index.json
+# 密钥不进仓库：私钥只在构建环境，公钥随 Pages 发布
+*.pem

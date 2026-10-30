@@ -1,55 +1,88 @@
-# openwrt-pkgs
+# pure-openwrt-feed
 
 自建 OpenWrt apk 源，供 [pure-openwrt](https://github.com/dawenbin/pure-openwrt) 使用。
 
-官方 OpenWrt 源里没有这两个包，而设备又需要它们，所以自己编、自己签名、自己托管。
+官方 OpenWrt 源里没有这两个包，而设备需要它们，所以在这里定义、构建、签名、托管。
+包的构建定义、编译宿主镜像和构建脚本都在本仓库。
 
 ## 内容
 
 ```text
-x86_64/packages.adb                    apk 索引
-x86_64/daed-<ver>-r1-x86_64.apk        daed（含 dae-wing 与内嵌面板）
-x86_64/vmlinux-btf-<kver>-r1-x86_64.apk 为官方内核配套的 BTF
+daed-<ver>-r<n>.apk          daed（dae-wing + dae + 内嵌面板）
+vmlinux-btf-<kver>-r<n>.apk  官方内核配套的 detached BTF
 ```
 
-`vmlinux-btf` 的版本号与内核版本一一对应，历史版本全部保留，便于回退。
+`vmlinux-btf` 依赖 `kernel (=<kver>~<vermagic>-r<n>)`，与官方内核一一绑定，
+内核不匹配时 apk 拒绝安装。
+
+发布方式：
+
+```text
+gh-pages 分支（Pages）  index.html、公钥、x86_64/ 下的 apk 与签名索引
+```
+
+`gh-pages` 每次强推成单个提交，不留历史。每个包保留最近 3 个版本，便于回退
+（`apk add daed=<版本>`）。
 
 ## 使用
 
-在设备的 `/etc/apk/repositories` 里加一行：
+源地址：<https://dawenbin.github.io/pure-openwrt-feed/>
 
 ```sh
-https://dawenbin.github.io/openwrt-pkgs/x86_64
-```
+# 信任本源的签名公钥
+wget -O /etc/apk/keys/pure-openwrt-feed.pem \
+  https://dawenbin.github.io/pure-openwrt-feed/keys/pure-openwrt-feed.pem
+# 添加源
+echo https://dawenbin.github.io/pure-openwrt-feed/x86_64/packages.adb \
+  >> /etc/apk/repositories.d/customfeeds.list
 
-然后：
-
-```sh
 apk update
-apk upgrade daed
+apk add daed
 ```
+
+## 构建
+
+```text
+packages/daed/          daed 的打包定义（改编自 ImmortalWrt）
+packages/vmlinux-btf/   影子内核 + BTF 编码 + 三道一致性门
+builder/Dockerfile      编译宿主镜像（Debian 12 + pahole 1.32）
+scripts/derive.sh       从 OpenWrt 版本号派生 SDK、内核、vermagic 等全部版本信息
+scripts/build.sh        入口：下载校验 SDK → 构建镜像 → 编译 → 签名 → 索引
+scripts/bump-daed.sh    更新 daed 版本，hash 由 SDK 的 check FIXUP 重算
+scripts/in-container.sh 容器内步骤
+scripts/verify.sh       在临时根目录里用 apk 验证产物
+```
+
+```sh
+# 需要 docker。目录都由参数给出，参数说明见脚本开头
+scripts/build.sh --openwrt-version <版本> --cache DIR --work DIR --key-dir DIR --out DIR
+scripts/verify.sh --openwrt-version <版本> --work DIR --out DIR --official-key <官方公钥>
+# 产物：<out>/x86_64/ 与 <out>/keys/
+```
+
+本仓库不放 workflow，也不挂 runner：构建由私有仓库 pure-openwrt 的流水线在自托管
+runner 上调用这些脚本完成，本仓库只保存打包定义与发布结果。packages/ 里的版本更新
+由流水线推回 main。
+
+编译用官方 OpenWrt x86/64 SDK，版本号不写死，全部由 OpenWrt 版本派生。SDK、官方
+kernel-debug 按官方 sha256sums 校验，内核源码按 SDK 里的 hash 校验，OpenWrt 补丁取自
+SDK `feeds.conf.default` 钉的完整提交。
+
+`vmlinux-btf` 的构建会在以下任一情况失败：
+
+1. SDK 自带的 `target/linux` 文件与固定提交不一致
+2. 影子内核 `.config` 相对官方有调试信息以外的变化
+3. 生成的 BTF 与官方 kernel-debug 中任一可比较结构体的大小或成员偏移不同
+
 
 ## 为什么是公开的
 
-这里只有二进制包和索引，**不包含任何凭据**。节点、订阅、面板密码都在设备的
-`/etc/daed/wing.db` 里，不会进入这个仓库。
+这里只有构建定义、二进制包和索引，**不包含任何凭据**。节点、订阅、面板密码都在设备的
+`/etc/daed/wing.db` 里；签名私钥只存在于构建环境。
 
 ## 来源与许可
 
 | 包 | 上游 | 许可 |
 | --- | --- | --- |
-| `daed` | [daeuniverse/daed](https://github.com/daeuniverse/daed) | AGPL-3.0 |
-| `vmlinux-btf` | 由 [OpenWrt](https://github.com/openwrt/openwrt) `25.12.6` 的内核调试信息生成 | GPL-2.0 |
-
-两个包都由本项目的 CI 从上述源码/产物构建，未经过第三方重打包。
-对应的源码获取地址就是上面表格里的链接。
-
-## 构建
-
-构建脚本与流水线在 [pure-openwrt](https://github.com/dawenbin/pure-openwrt)：
-
-```text
-build/daed/            daed 的 apk 打包定义
-build/vmlinux-btf/     BTF 的 apk 打包定义
-ci/                    构建与发布流水线
-```
+| `daed` | [daeuniverse/daed](https://github.com/daeuniverse/daed)，打包定义改编自 [immortalwrt/packages](https://github.com/immortalwrt/packages)（Copyright (C) 2023 ImmortalWrt.org） | AGPL-3.0 / MIT；打包定义 GPL-2.0 |
+| `vmlinux-btf` | 由 [OpenWrt](https://github.com/openwrt/openwrt) 的内核源码、补丁与配置生成 | GPL-2.0 |

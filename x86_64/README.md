@@ -1,11 +1,3 @@
 # x86_64 包目录
 
-CI 会把以下文件推到这里：
-
-```text
-packages.adb                         apk 索引
-daed-<ver>-r1-x86_64.apk
-vmlinux-btf-<kver>-r1-x86_64.apk
-```
-
-本文件只用于占位，让目录在首次构建前就存在。
+本目录的内容只存在于 `gh-pages` 分支：签名索引 `packages.adb` 和 apk，每个包保留最近 3 个版本。

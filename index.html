@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>openwrt-pkgs</title>
+<title>pure-openwrt-feed</title>
 <style>
   body { font: 15px/1.7 -apple-system, "Segoe UI", "PingFang SC", sans-serif;
          max-width: 720px; margin: 3rem auto; padding: 0 1.2rem; color: #222; }
@@ -13,21 +13,24 @@
 </style>
 </head>
 <body>
-<h1>openwrt-pkgs</h1>
+<h1>pure-openwrt-feed</h1>
 <p class="muted">自建 OpenWrt apk 源 · 仅含 daed 与 vmlinux-btf · 不含任何凭据</p>
 
 <h2>使用方法</h2>
-<pre># /etc/apk/repositories
-https://dawenbin.github.io/openwrt-pkgs/x86_64</pre>
+<pre>wget -O /etc/apk/keys/pure-openwrt-feed.pem   https://dawenbin.github.io/pure-openwrt-feed/keys/pure-openwrt-feed.pem
+echo https://dawenbin.github.io/pure-openwrt-feed/x86_64/packages.adb   &gt;&gt; /etc/apk/repositories.d/customfeeds.list</pre>
 <pre>apk update
-apk upgrade daed</pre>
+apk add daed</pre>
 
 <h2>索引</h2>
-<p><a href="x86_64/packages.adb">x86_64/packages.adb</a></p>
+<p><a href="x86_64/packages.adb">x86_64/packages.adb</a> ·
+   <a href="keys/pure-openwrt-feed.pem">keys/pure-openwrt-feed.pem</a> ·
+   <a href="https://github.com/dawenbin/pure-openwrt-feed">构建定义</a></p>
+<p class="muted">每个包保留最近 3 个版本。</p>
 
 <p class="muted">
   daed: AGPL-3.0 · daeuniverse/daed<br>
-  vmlinux-btf: GPL-2.0 · 由 openwrt/openwrt 25.12.6 内核调试信息生成
+  vmlinux-btf: GPL-2.0 · 由 openwrt/openwrt 内核源码、补丁与配置生成
 </p>
 </body>
 </html>
