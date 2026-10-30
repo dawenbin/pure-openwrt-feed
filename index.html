@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>openwrt-pkgs</title>
+<style>
+  body { font: 15px/1.7 -apple-system, "Segoe UI", "PingFang SC", sans-serif;
+         max-width: 720px; margin: 3rem auto; padding: 0 1.2rem; color: #222; }
+  code { background: #f3f3f3; padding: .15em .4em; border-radius: 3px; }
+  pre { background: #f6f6f6; padding: .9rem; overflow-x: auto; border-radius: 4px; }
+  h1 { font-size: 1.5rem; }
+  .muted { color: #777; }
+</style>
+</head>
+<body>
+<h1>openwrt-pkgs</h1>
+<p class="muted">自建 OpenWrt apk 源 · 仅含 daed 与 vmlinux-btf · 不含任何凭据</p>
+
+<h2>使用方法</h2>
+<pre># /etc/apk/repositories
+https://dawenbin.github.io/openwrt-pkgs/x86_64</pre>
+<pre>apk update
+apk upgrade daed</pre>
+
+<h2>索引</h2>
+<p><a href="x86_64/packages.adb">x86_64/packages.adb</a></p>
+
+<p class="muted">
+  daed: AGPL-3.0 · daeuniverse/daed<br>
+  vmlinux-btf: GPL-2.0 · 由 openwrt/openwrt 25.12.6 内核调试信息生成
+</p>
+</body>
+</html>
