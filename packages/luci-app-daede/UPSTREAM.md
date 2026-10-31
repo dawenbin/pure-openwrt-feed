@@ -27,3 +27,4 @@
 | `converter.js` | 只导入 daed，默认分组名改为 `node` |
 | `updates.js` | BTF 按 `vmlinux-<版本>` 查找；不提供删除 netns |
 | ACL | 按实际用到的收窄，对 `uci daed` 只读 |
+| `Makefile` | `LUCI_MINIFY_JS:=0`：jsmin 会截断 `converter.js` 字符类里带 `/` 的正则 |
