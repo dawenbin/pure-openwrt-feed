@@ -19,7 +19,7 @@
 | 改动 | 内容 |
 | --- | --- |
 | `update-geo.sh` | 默认源改 v2fly；替换前校验结构与分类，内容没变不重启，用 restart 而非 reload，重启后没绑定就回滚 |
-| `geo-cron.sh` | 定时按 UTC 换算到北京时间 10:17（路由器时区是 UTC；更新后 daed 重启会短暂断网，放在白天） |
+| `geo-cron.sh` | 定时按 UTC 换算到北京时间 08:10（路由器时区是 UTC；更新后 daed 重启会短暂断网，放在白天） |
 | `etc/config/daede` | 默认开启每天更新，数据源 v2fly |
 | `90-luci-app-daede-init` | 只写 cron 条目，不动 daed 与其他包 |
 | `config-backup.sh` | 只管 daed |

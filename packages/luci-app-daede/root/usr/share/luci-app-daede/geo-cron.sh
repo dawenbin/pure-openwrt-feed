@@ -19,9 +19,9 @@ clean
 
 if [ "$ACTION" = "enable" ]; then
 	case "$(uci -q get daede.config.geo_auto_freq)" in
-		# 路由器时区是 UTC。数据有变化时 daed 要重启、全屋断网约 1~2 秒，放在北京时间白天 10:17。
-		weekly) sched="17 2 * * 0" ;;   # 北京时间周日 10:17（UTC 周日 02:17）
-		*)      sched="17 2 * * *" ;;   # 北京时间每天 10:17（UTC 02:17）
+		# 路由器时区是 UTC。数据有变化时 daed 要重启、全屋断网约 1~2 秒，放在北京时间早上 08:10，排在 08:00 的订阅更新之后，重启时新节点一并生效。
+		weekly) sched="10 0 * * 0" ;;   # 北京时间周日 08:10（UTC 周日 00:10）
+		*)      sched="10 0 * * *" ;;   # 北京时间每天 08:10（UTC 00:10）
 	esac
 	mkdir -p /etc/crontabs
 	{
