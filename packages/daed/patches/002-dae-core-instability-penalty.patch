@@ -1,0 +1,605 @@
+让经常掉线的节点在选节点时靠后：给排序延迟加一项随时间衰减的“不稳定罚时”。
+
+现有的退避罚时只覆盖节点复活后的几十秒：它由一个 20 秒的定时器减级，比 30 秒的
+检查间隔还短，到点时不可能有新的探测结果；失败的探测也不进延迟统计。所以每隔几分钟
+掉线一次的节点，绝大部分时间没有任何惩罚，又保留着成功探测的低延迟，会反复被选为
+组内最优。线上 4 小时日志里，4 个节点占了 93 次 tcp4 掉线中的 72 次，仍被反复选中。
+
+做法：每个 collection（按网络类型分开）记一个失败分。探测发现“存活变掉线”且该
+collection 曾经成功过时加 1 分；分数按 30 分钟半衰期衰减，上限 10 分；罚时 = 分数 ×
+200ms，加在 snapshotLatencyForPolicy 的排序延迟上。只改排序，不碰 Alive，节点不会因此
+变得不可选。分数随 reload 的健康快照继承（退避状态仍按原样清零），进程重启后从零开始。
+
+不记分的情况：强制标记（连带扇出、本机网络不通）、真实流量触发的掉线（取决于目的
+地）、从未成功过的 collection（例如关闭 IPv6 时的 tcp6、启动时网络未就绪）。
+
+带单元测试（instability_test.go）。本补丁可原样提交上游。
+
+diff --git a/dae-core/component/outbound/dialer/alive_dialer_set.go b/dae-core/component/outbound/dialer/alive_dialer_set.go
+index ddb22e5..4392c2b 100644
+--- a/dae-core/component/outbound/dialer/alive_dialer_set.go
++++ b/dae-core/component/outbound/dialer/alive_dialer_set.go
+@@ -452,6 +452,11 @@ func (a *AliveDialerSet) NotifyLatencyChange(dialer *Dialer, alive bool) {
+ 						delta := newBestLatency + newBestOffset - bakOldMinSortingLatency
+ 						fields["latency_delta_ms"] = delta.Milliseconds()
+ 					}
++					// The logged latency already includes this penalty; name it
++					// so a slow-looking winner is not mistaken for a slow node.
++					if penalty := newBestDialer.InstabilityPenalty(a.CheckTyp); penalty > 0 {
++						fields["instability_penalty"] = penalty.Round(time.Millisecond).String()
++					}
+ 					a.log.WithFields(fields).Infof("Group %vselects dialer", re)
+ 				}
+ 
+diff --git a/dae-core/component/outbound/dialer/connectivity_check.go b/dae-core/component/outbound/dialer/connectivity_check.go
+index d0e47c1..c53ae14 100644
+--- a/dae-core/component/outbound/dialer/connectivity_check.go
++++ b/dae-core/component/outbound/dialer/connectivity_check.go
+@@ -183,6 +183,8 @@ type collection struct {
+ 	MovingAverage     time.Duration
+ 	LastProbe         DialerProbeObservationSnapshot
+ 	Alive             atomic.Bool
++	// instability remembers how often this collection died; see instability.go.
++	instability instability
+ }
+ 
+ func newCollection() *collection {
+@@ -295,9 +297,11 @@ func (d *Dialer) snapshotLatencyForPolicy(
+ 		rawLatency = collection.MovingAverage
+ 		hasLatency = rawLatency > 0
+ 	}
++	instabilityPenalty := d.instabilityPenaltyLocked(typ, time.Now())
+ 	d.collectionFineMu.RUnlock()
+ 
+ 	if hasLatency {
++		rawLatency += instabilityPenalty
+ 		penalty := d.getBackoffPenaltyForType(typ)
+ 		if latencyType != typ {
+ 			// A borrowed latency inherits the DNS domain's backoff penalty as
+@@ -1197,6 +1201,14 @@ func (d *Dialer) markUnavailableInternal(typ *NetworkType, force bool, isTraffic
+ 	}
+ 	wasAlive := collection.Alive.Load()
+ 	collection.Alive.Store(alive)
++	// Only a probe-detected death of a node that has worked before is evidence
++	// about the node itself. Forced deaths are fan-out or local-network
++	// conditions, traffic deaths depend on the destination, and a collection
++	// that never succeeded (e.g. IPv6 on an IPv4-only host) has no stability
++	// to lose.
++	if wasAlive && !alive && !force && !isTraffic && collection.MovingAverage > 0 {
++		collection.instability.record(time.Now())
++	}
+ 
+ 	update := collectionUpdate{
+ 		alive:             alive,
+diff --git a/dae-core/component/outbound/dialer/dialer.go b/dae-core/component/outbound/dialer/dialer.go
+index 34300f2..4a16fef 100644
+--- a/dae-core/component/outbound/dialer/dialer.go
++++ b/dae-core/component/outbound/dialer/dialer.go
+@@ -159,6 +159,10 @@ type DialerCollectionHealthSnapshot struct {
+ 	LastProbe        DialerProbeObservationSnapshot
+ 	FailCount        int
+ 	TrafficFailCount int32
++	// Instability survives ReloadHealthSnapshot on purpose: unlike the
++	// transient backoff state it is long-term evidence about the node, and
++	// dropping it would let every reload launder an unstable node.
++	Instability DialerInstabilitySnapshot
+ }
+ 
+ type DialerProbeObservationSnapshot struct {
+@@ -556,6 +560,7 @@ func (d *Dialer) HealthSnapshot() DialerHealthSnapshot {
+ 			LastProbe:        collection.LastProbe,
+ 			FailCount:        d.failCount[idx],
+ 			TrafficFailCount: d.trafficFailCount[idx].Load(),
++			Instability:      collection.instability.snapshot(),
+ 		}
+ 	}
+ 	snapshot.Recovery = d.ensureRecoveryManager().snapshot(time.Now().UnixNano())
+@@ -603,6 +608,7 @@ func (d *Dialer) RestoreHealthSnapshot(snapshot DialerHealthSnapshot) {
+ 		collection.MovingAverage = s.MovingAverage
+ 		collection.Latencies10.Restore(s.Latencies)
+ 		collection.LastProbe = s.LastProbe
++		collection.instability.restore(s.Instability)
+ 		d.failCount[idx] = s.FailCount
+ 		d.trafficFailCount[idx].Store(s.TrafficFailCount)
+ 		if !s.Alive {
+diff --git a/dae-core/component/outbound/dialer/instability.go b/dae-core/component/outbound/dialer/instability.go
+new file mode 100644
+index 0000000..31e6b81
+--- /dev/null
++++ b/dae-core/component/outbound/dialer/instability.go
+@@ -0,0 +1,118 @@
++/*
++ * SPDX-License-Identifier: AGPL-3.0-only
++ * Copyright (c) 2026, daeuniverse Organization <dae@v2raya.org>
++ */
++
++package dialer
++
++import (
++	"math"
++	"time"
++
++	"github.com/daeuniverse/dae/common/consts"
++)
++
++// Instability is the selection layer's memory of how often a node dies.
++//
++// The backoff penalty in recovery_state.go only covers the seconds right
++// after a revival: it is decremented by a timer that fires before the next
++// periodic probe can run, so a node that dies every few minutes spends almost
++// all of its alive time unpunished. Failed probes also never enter the latency
++// statistics, so such a node keeps the low latency of its successful probes
++// and keeps winning the group.
++//
++// Each probe-detected alive->dead transition adds one point to a score that
++// decays exponentially with time. The score is turned into an additive
++// sorting-latency penalty, which is the expected extra cost of picking a node
++// that is likely to fail again soon. It never touches the alive flag: an
++// unstable node only sorts later, it is never made unselectable.
++const (
++	// instabilityHalfLife is how long it takes for a recorded death to count
++	// half as much.
++	instabilityHalfLife = 30 * time.Minute
++	// instabilityUnitPenalty is the sorting-latency cost of one undecayed death.
++	instabilityUnitPenalty = 200 * time.Millisecond
++	// instabilityMaxScore bounds both the stored score and the penalty
++	// (instabilityMaxScore * instabilityUnitPenalty), so a node that stops
++	// failing is forgiven within a bounded time however badly it behaved.
++	instabilityMaxScore = 10.0
++)
++
++// instability is guarded by the owning Dialer's collectionFineMu.
++type instability struct {
++	score float64
++	// at is when score was last brought up to date. It carries Go's monotonic
++	// clock reading, so decay is immune to wall-clock steps.
++	at time.Time
++}
++
++// DialerInstabilitySnapshot carries the instability score across a reload.
++type DialerInstabilitySnapshot struct {
++	Score float64
++	At    time.Time
++}
++
++func (s instability) scoreAt(now time.Time) float64 {
++	if s.score <= 0 || s.at.IsZero() {
++		return 0
++	}
++	elapsed := now.Sub(s.at)
++	if elapsed <= 0 {
++		return s.score
++	}
++	return s.score * math.Exp2(-float64(elapsed)/float64(instabilityHalfLife))
++}
++
++func (s instability) penaltyAt(now time.Time) time.Duration {
++	score := min(s.scoreAt(now), instabilityMaxScore)
++	return time.Duration(score * float64(instabilityUnitPenalty))
++}
++
++func (s *instability) record(now time.Time) {
++	s.score = min(s.scoreAt(now)+1, instabilityMaxScore)
++	s.at = now
++}
++
++func (s instability) snapshot() DialerInstabilitySnapshot {
++	return DialerInstabilitySnapshot{Score: s.score, At: s.at}
++}
++
++func (s *instability) restore(snapshot DialerInstabilitySnapshot) {
++	s.score = min(max(snapshot.Score, 0), instabilityMaxScore)
++	s.at = snapshot.At
++}
++
++// instabilityLatencyType mirrors the latency borrowing in
++// snapshotLatencyForPolicy: data-UDP has no probe of its own and is ranked by
++// the DNS-UDP domain of the same IP version, so it inherits that domain's
++// instability as well.
++func instabilityLatencyType(typ *NetworkType) *NetworkType {
++	if typ.L4Proto == consts.L4ProtoStr_UDP && typ.EffectiveUdpHealthDomain() == UdpHealthDomainData {
++		if typ.IpVersion == consts.IpVersionStr_6 {
++			return dnsBorrowedLatencyV6
++		}
++		return dnsBorrowedLatencyV4
++	}
++	return typ
++}
++
++// instabilityPenaltyLocked returns the penalty applied to typ's sorting
++// latency. The caller must hold collectionFineMu.
++func (d *Dialer) instabilityPenaltyLocked(typ *NetworkType, now time.Time) time.Duration {
++	penalty := d.mustGetCollection(typ).instability.penaltyAt(now)
++	if latencyType := instabilityLatencyType(typ); latencyType != typ {
++		penalty = max(penalty, d.mustGetCollection(latencyType).instability.penaltyAt(now))
++	}
++	return penalty
++}
++
++// InstabilityPenalty returns the instability penalty currently applied to
++// typ's sorting latency.
++func (d *Dialer) InstabilityPenalty(typ *NetworkType) time.Duration {
++	if d == nil || typ == nil {
++		return 0
++	}
++	d.collectionFineMu.RLock()
++	defer d.collectionFineMu.RUnlock()
++	return d.instabilityPenaltyLocked(typ, time.Now())
++}
+diff --git a/dae-core/component/outbound/dialer/instability_test.go b/dae-core/component/outbound/dialer/instability_test.go
+new file mode 100644
+index 0000000..93766f6
+--- /dev/null
++++ b/dae-core/component/outbound/dialer/instability_test.go
+@@ -0,0 +1,371 @@
++/*
++ * SPDX-License-Identifier: AGPL-3.0-only
++ * Copyright (c) 2026, daeuniverse Organization <dae@v2raya.org>
++ */
++
++package dialer
++
++import (
++	"errors"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/daeuniverse/dae/common/consts"
++	"github.com/sirupsen/logrus"
++	"github.com/sirupsen/logrus/hooks/test"
++)
++
++func instabilityScore(d *Dialer, typ *NetworkType) float64 {
++	d.collectionFineMu.RLock()
++	defer d.collectionFineMu.RUnlock()
++	return d.mustGetCollection(typ).instability.scoreAt(time.Now())
++}
++
++// ageInstability moves the score's timestamp into the past, which is how the
++// tests let time pass without sleeping.
++func ageInstability(d *Dialer, typ *NetworkType, age time.Duration) {
++	d.collectionFineMu.Lock()
++	c := d.mustGetCollection(typ)
++	c.instability.at = c.instability.at.Add(-age)
++	d.collectionFineMu.Unlock()
++}
++
++// clearBackoff drops the transient backoff penalty so a test observes the
++// instability penalty alone.
++func clearBackoff(d *Dialer) {
++	d.ensureRecoveryManager().restore([3]DialerRecoveryHealthSnapshot{})
++}
++
++func probeFail(d *Dialer, typ *NetworkType) {
++	d.informDialerGroupUpdate(d.markUnavailable(typ))
++}
++
++func probeOK(d *Dialer, typ *NetworkType, latency time.Duration) {
++	update, _ := d.markAvailable(typ, latency)
++	d.informDialerGroupUpdate(update)
++}
++
++func flap(d *Dialer, typ *NetworkType, latency time.Duration, times int) {
++	for range times {
++		probeFail(d, typ)
++		probeOK(d, typ, latency)
++	}
++}
++
++func newInstabilitySet(t *testing.T, log *logrus.Logger, typ *NetworkType, dialers ...*Dialer) *AliveDialerSet {
++	t.Helper()
++	annotations := make([]*Annotation, len(dialers))
++	for i := range annotations {
++		annotations[i] = &Annotation{}
++	}
++	set := NewAliveDialerSet(log, "instability-group", typ, 0,
++		consts.DialerSelectionPolicy_MinMovingAverageLatencies, dialers, annotations, func(bool) {}, true)
++	for _, d := range dialers {
++		d.RegisterAliveDialerSet(set)
++	}
++	t.Cleanup(func() {
++		for _, d := range dialers {
++			d.UnregisterAliveDialerSet(set)
++		}
++	})
++	return set
++}
++
++func TestInstabilityScoreDecaysAndIsBounded(t *testing.T) {
++	now := time.Now()
++	var s instability
++	if got := s.penaltyAt(now); got != 0 {
++		t.Fatalf("zero value penalty = %v, want 0", got)
++	}
++
++	s.record(now)
++	if got := s.scoreAt(now); got != 1 {
++		t.Fatalf("score after one death = %v, want 1", got)
++	}
++	if got := s.penaltyAt(now); got != instabilityUnitPenalty {
++		t.Fatalf("penalty after one death = %v, want %v", got, instabilityUnitPenalty)
++	}
++	if got := s.scoreAt(now.Add(instabilityHalfLife)); got < 0.499 || got > 0.501 {
++		t.Fatalf("score after one half-life = %v, want 0.5", got)
++	}
++	// A clock that appears to run backwards must not inflate the score.
++	if got := s.scoreAt(now.Add(-time.Hour)); got != 1 {
++		t.Fatalf("score with negative elapsed time = %v, want 1", got)
++	}
++
++	for range 100 {
++		s.record(now)
++	}
++	if got := s.scoreAt(now); got != instabilityMaxScore {
++		t.Fatalf("score after 100 deaths = %v, want the cap %v", got, instabilityMaxScore)
++	}
++	maxPenalty := time.Duration(instabilityMaxScore * float64(instabilityUnitPenalty))
++	if got := s.penaltyAt(now); got != maxPenalty {
++		t.Fatalf("penalty at the cap = %v, want %v", got, maxPenalty)
++	}
++	// Bounded score means bounded forgiveness time.
++	if got := s.penaltyAt(now.Add(8 * instabilityHalfLife)); got > 10*time.Millisecond {
++		t.Fatalf("penalty 8 half-lives after the cap = %v, want it essentially gone", got)
++	}
++}
++
++// Only a probe-detected death of a node that has worked before is evidence
++// about the node.
++func TestInstabilityRecordsOnlyProbeDeathsOfProvenNodes(t *testing.T) {
++	tcp4 := newTestNetworkType()
++	tcp6 := &NetworkType{L4Proto: consts.L4ProtoStr_TCP, IpVersion: consts.IpVersionStr_6, IsDns: true}
++	d := newNamedTestDialer(t, "instability-record")
++
++	// tcp6 never succeeds (IPv4-only host): its permanent failure is not instability.
++	probeFail(d, tcp6)
++	probeFail(d, tcp6)
++	if got := instabilityScore(d, tcp6); got != 0 {
++		t.Fatalf("never-succeeded collection scored %v, want 0", got)
++	}
++
++	// A first-ever probe failure (e.g. WAN not up yet at startup) is not counted either.
++	probeFail(d, tcp4)
++	if got := instabilityScore(d, tcp4); got != 0 {
++		t.Fatalf("death before any success scored %v, want 0", got)
++	}
++
++	probeOK(d, tcp4, 50*time.Millisecond)
++	probeFail(d, tcp4)
++	if got := instabilityScore(d, tcp4); got < 0.99 || got > 1 {
++		t.Fatalf("probe death scored %v, want 1", got)
++	}
++	// Staying dead is one event, not one per failed probe.
++	probeFail(d, tcp4)
++	probeFail(d, tcp4)
++	if got := instabilityScore(d, tcp4); got > 1 {
++		t.Fatalf("repeated failures while dead scored %v, want still 1", got)
++	}
++
++	// Forced deaths (fan-out, local network) are not node evidence.
++	probeOK(d, tcp4, 50*time.Millisecond)
++	d.ReportUnavailableForced(tcp4, errors.New("forced"))
++	if d.MustGetAlive(tcp4) {
++		t.Fatal("forced report did not mark the dialer dead")
++	}
++	if got := instabilityScore(d, tcp4); got > 1 {
++		t.Fatalf("forced death scored %v, want still 1", got)
++	}
++
++	// Traffic deaths depend on the destination and are not counted.
++	probeOK(d, tcp4, 50*time.Millisecond)
++	for range 10 {
++		d.ReportUnavailable(tcp4, errors.New("traffic"))
++	}
++	if d.MustGetAlive(tcp4) {
++		t.Fatal("traffic failures did not reach the death threshold")
++	}
++	if got := instabilityScore(d, tcp4); got > 1 {
++		t.Fatalf("traffic death scored %v, want still 1", got)
++	}
++
++	if got := instabilityScore(d, tcp6); got != 0 {
++		t.Fatalf("tcp4 deaths leaked into tcp6: score %v", got)
++	}
++}
++
++// The behaviour the patch exists for: a fast node that keeps dying loses the
++// group to a slower steady node, and wins it back once it has been stable.
++func TestUnstableNodeLosesSelectionUntilForgiven(t *testing.T) {
++	typ := newTestNetworkType()
++	fast := newNamedTestDialer(t, "fast-flapper")
++	steady := newNamedTestDialer(t, "slow-steady")
++	set := newInstabilitySet(t, fast.Log, typ, fast, steady)
++
++	probeOK(fast, typ, 100*time.Millisecond)
++	probeOK(steady, typ, 300*time.Millisecond)
++	if best, _ := set.GetMinLatency(nil); best != fast {
++		t.Fatalf("before any death the faster node must win, got %v", best.Property().Name)
++	}
++
++	flap(fast, typ, 100*time.Millisecond, 4)
++	clearBackoff(fast)
++	set.NotifyLatencyChange(fast, true)
++	set.NotifyLatencyChange(steady, true)
++
++	best, latency := set.GetMinLatency(nil)
++	if best != steady {
++		t.Fatalf("after 4 deaths the flapper still wins with sorting latency %v", latency)
++	}
++	if set.Len() != 2 {
++		t.Fatalf("the penalty must not remove the node from the set, len = %d", set.Len())
++	}
++	if got := fast.InstabilityPenalty(typ); got < 700*time.Millisecond || got > 800*time.Millisecond {
++		t.Fatalf("flapper penalty = %v, want about 4 x %v", got, instabilityUnitPenalty)
++	}
++
++	ageInstability(fast, typ, 10*instabilityHalfLife)
++	set.NotifyLatencyChange(fast, true)
++	if best, _ := set.GetMinLatency(nil); best != fast {
++		t.Fatal("a node that has been stable for 10 half-lives must win again")
++	}
++}
++
++// Equal instability must leave the ordering exactly as it was: a group-wide
++// outage penalises everyone and must not reshuffle the group.
++func TestEqualInstabilityKeepsOrdering(t *testing.T) {
++	typ := newTestNetworkType()
++	fast := newNamedTestDialer(t, "fast")
++	slow := newNamedTestDialer(t, "slow")
++	set := newInstabilitySet(t, fast.Log, typ, fast, slow)
++
++	probeOK(fast, typ, 100*time.Millisecond)
++	probeOK(slow, typ, 300*time.Millisecond)
++	flap(fast, typ, 100*time.Millisecond, 100)
++	flap(slow, typ, 300*time.Millisecond, 100)
++	clearBackoff(fast)
++	clearBackoff(slow)
++	set.NotifyLatencyChange(fast, true)
++	set.NotifyLatencyChange(slow, true)
++
++	maxPenalty := time.Duration(instabilityMaxScore * float64(instabilityUnitPenalty))
++	if got := fast.InstabilityPenalty(typ); got > maxPenalty {
++		t.Fatalf("penalty %v exceeds the cap %v", got, maxPenalty)
++	}
++	if set.Len() != 2 {
++		t.Fatalf("capped nodes must stay selectable, len = %d", set.Len())
++	}
++	if best, _ := set.GetMinLatency(nil); best != fast {
++		t.Fatal("equal penalties must not change which node wins")
++	}
++}
++
++// A reload must not launder an unstable node, while the transient backoff
++// state is still dropped as before.
++func TestInstabilitySurvivesReloadSnapshot(t *testing.T) {
++	typ := newTestNetworkType()
++	old := newNamedTestDialer(t, "reload-old")
++	probeOK(old, typ, 100*time.Millisecond)
++	flap(old, typ, 100*time.Millisecond, 3)
++	want := instabilityScore(old, typ)
++	if want < 2.9 {
++		t.Fatalf("fixture score = %v, want about 3", want)
++	}
++
++	snapshot := old.ReloadHealthSnapshot()
++	for idx, recovery := range snapshot.Recovery {
++		if recovery.BackoffLevel != 0 {
++			t.Fatalf("reload snapshot kept backoff level %d for domain %d", recovery.BackoffLevel, idx)
++		}
++	}
++
++	replacement := newNamedTestDialer(t, "reload-new")
++	replacement.RestoreHealthSnapshot(snapshot)
++	if got := instabilityScore(replacement, typ); got < want-0.01 || got > want {
++		t.Fatalf("score after reload = %v, want %v", got, want)
++	}
++	if got := replacement.InstabilityPenalty(typ); got < 500*time.Millisecond {
++		t.Fatalf("penalty after reload = %v, want it preserved", got)
++	}
++	// Decay continues from the original timestamp rather than restarting.
++	ageInstability(replacement, typ, instabilityHalfLife)
++	if got := instabilityScore(replacement, typ); got > want/2+0.01 {
++		t.Fatalf("score one half-life after reload = %v, want about %v", got, want/2)
++	}
++}
++
++// Data-UDP is ranked by the DNS-UDP latency of the same IP version, so it must
++// inherit that domain's instability too.
++func TestDataUdpInheritsDnsUdpInstability(t *testing.T) {
++	data := udpDataNetworkType()
++	d := newNamedTestDialer(t, "udp-borrow")
++	if got := d.InstabilityPenalty(data); got != 0 {
++		t.Fatalf("fresh data-UDP penalty = %v, want 0", got)
++	}
++
++	d.collectionFineMu.Lock()
++	d.mustGetCollection(dnsBorrowedLatencyV4).instability.record(time.Now())
++	d.collectionFineMu.Unlock()
++
++	if got := d.InstabilityPenalty(data); got < instabilityUnitPenalty-time.Millisecond {
++		t.Fatalf("data-UDP penalty = %v, want the DNS-UDP domain's %v", got, instabilityUnitPenalty)
++	}
++}
++
++// The logged latency includes the penalty, so the selection line must name it.
++func TestSelectionLogNamesInstabilityPenalty(t *testing.T) {
++	typ := newTestNetworkType()
++	a := newNamedTestDialer(t, "log-a")
++	b := newNamedTestDialer(t, "log-b")
++	logger, hook := test.NewNullLogger()
++	logger.SetLevel(logrus.InfoLevel)
++	a.Log, b.Log = logger, logger
++	set := newInstabilitySet(t, logger, typ, a, b)
++
++	probeOK(a, typ, 100*time.Millisecond)
++	probeOK(b, typ, 300*time.Millisecond)
++	flap(a, typ, 100*time.Millisecond, 4)
++	flap(b, typ, 300*time.Millisecond, 1)
++	clearBackoff(a)
++	clearBackoff(b)
++
++	hook.Reset()
++	set.NotifyLatencyChange(a, true)
++	set.NotifyLatencyChange(b, true)
++	if best, _ := set.GetMinLatency(nil); best != b {
++		t.Fatal("fixture: the less unstable node must win")
++	}
++
++	var selection *logrus.Entry
++	for _, entry := range hook.AllEntries() {
++		if entry.Data["_new_dialer"] == "log-b" {
++			selection = entry
++		}
++	}
++	if selection == nil {
++		t.Fatal("no selection line for the winner")
++	}
++	if _, ok := selection.Data["instability_penalty"]; !ok {
++		t.Fatalf("selection line %v lacks instability_penalty although the winner is penalised", selection.Data)
++	}
++}
++
++// Recording, reading and selection run concurrently in production; this must
++// neither deadlock nor trip the race detector.
++func TestInstabilityConcurrentUse(t *testing.T) {
++	typ := newTestNetworkType()
++	a := newNamedTestDialer(t, "race-a")
++	b := newNamedTestDialer(t, "race-b")
++	set := newInstabilitySet(t, a.Log, typ, a, b)
++	probeOK(a, typ, 100*time.Millisecond)
++	probeOK(b, typ, 200*time.Millisecond)
++
++	var wg sync.WaitGroup
++	for _, d := range []*Dialer{a, b} {
++		wg.Add(3)
++		go func() {
++			defer wg.Done()
++			flap(d, typ, 100*time.Millisecond, 200)
++		}()
++		go func() {
++			defer wg.Done()
++			for range 200 {
++				_ = d.InstabilityPenalty(typ)
++				set.NotifyLatencyChange(d, d.MustGetAlive(typ))
++				_, _ = set.GetMinLatency(nil)
++			}
++		}()
++		go func() {
++			defer wg.Done()
++			for range 50 {
++				replacement := d.ReloadHealthSnapshot()
++				_ = replacement.Collections[typ.Index()].Instability
++			}
++		}()
++	}
++	done := make(chan struct{})
++	go func() { wg.Wait(); close(done) }()
++	select {
++	case <-done:
++	case <-time.After(30 * time.Second):
++		t.Fatal("concurrent instability use deadlocked")
++	}
++	if set.Len() == 0 && (a.MustGetAlive(typ) || b.MustGetAlive(typ)) {
++		t.Fatal("set lost an alive dialer")
++	}
++}

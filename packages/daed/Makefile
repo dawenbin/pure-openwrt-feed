@@ -6,7 +6,10 @@
 #
 #   1 daed 与 dae-wing 上游都已归档。daed v2.1.1 这个 tag 钉的 wing 是 dc503088，这里直接取
 #     wing 的最后提交 b089b568（dae-core v2.1.1 与面板流量统计修复），子模块随之取得。
-#     patches/ 只有 dae 上游修复 6f2f2aa 的回移：v2.1.1 去掉了 wing 要用的 Marshaller.Bytes。
+#     patches/001 是 dae 上游修复 6f2f2aa 的回移：v2.1.1 去掉了 wing 要用的 Marshaller.Bytes。
+#     patches/002 给选节点加“不稳定罚时”：经常掉线的节点排序靠后，说明见补丁头部。
+#     换 wing 提交后两个补丁都要重新对上；002 带单元测试，改动后在打过补丁的 dae-core 里跑
+#     GOOS=linux go test ./component/outbound/dialer
 #     wing 的 GraphQL 相对 dc503088 只增不减，所以前端仍用 v2.1.1 的 web.zip。
 #     版本号沿用 2.1.1，靠 PKG_RELEASE 让 apk 从 2.1.1-r1 升级。
 #     版本、wing 提交与两处 hash 由 scripts/bump-daed.sh 更新，不手改
@@ -29,7 +32,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=daed
 PKG_VERSION:=2.1.1
-PKG_RELEASE:=2
+PKG_RELEASE:=3
 
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/daeuniverse/dae-wing.git
