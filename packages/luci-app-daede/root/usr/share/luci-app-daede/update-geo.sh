@@ -76,6 +76,15 @@ daed_bound() {
 	return 1
 }
 
+daed_stop() {
+	/etc/init.d/daed stop >/dev/null 2>&1
+	i=0
+	while [ "$i" -lt 30 ] && /bin/pidof daed >/dev/null 2>&1; do
+		sleep 1
+		i=$((i + 1))
+	done
+}
+
 schedule_backend_reload() {
 	if [ -d "$RLOCK" ]; then
 		rmt=$(date -r "$RLOCK" +%s 2>/dev/null || echo 0)
@@ -93,8 +102,7 @@ schedule_backend_reload() {
 				rm -f /usr/share/v2ray/*.dat.bak "$DB_BAK"
 				echo "$(date '+%F %T') reloaded daed"
 			else
-				/etc/init.d/daed stop >/dev/null 2>&1
-				sleep 3
+				daed_stop
 				for f in /usr/share/v2ray/*.dat.bak; do
 					[ -f "$f" ] && mv "$f" "${f%.bak}"
 				done

@@ -7,7 +7,7 @@ include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-daede
 PKG_VERSION:=1.15
-PKG_RELEASE:=4
+PKG_RELEASE:=5
 PKG_PO_VERSION:=$(PKG_VERSION)-r$(PKG_RELEASE)
 
 PKG_LICENSE:=AGPL-3.0-only Apache-2.0
