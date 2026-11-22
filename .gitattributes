@@ -1,0 +1,13 @@
+# 本仓脚本、Makefile、补丁最终在 Linux / OpenWrt 上运行，统一使用 LF 换行。
+* text=auto eol=lf
+
+# 二进制文件不做换行转换
+*.apk   binary
+*.adb   binary
+*.ipk   binary
+*.gz    binary
+*.zst   binary
+*.tar   binary
+*.zip   binary
+*.png   binary
+*.jpg   binary
